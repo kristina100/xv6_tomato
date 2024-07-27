@@ -36,3 +36,5 @@ entry("getpid");
 entry("sbrk");
 entry("sleep");
 entry("uptime");
+entry("trace"); # per脚本，生成实际的系统调用存根
+entry("sysinfo");

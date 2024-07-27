@@ -291,6 +291,9 @@ fork(void)
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 
+  // 将trace-mask拷贝到子进程
+  np->trace_mask = p->trace_mask;
+
   pid = np->pid;
 
   np->state = RUNNABLE;
@@ -298,6 +301,20 @@ fork(void)
   release(&np->lock);
 
   return pid;
+}
+
+void
+procnum(uint64 *dst)
+{
+  *dst = 0;
+  struct proc *p;
+  for(p = proc; p < &proc[NPROC]; p++){
+    acquire(&p->lock);
+    if(p->state != UNUSED){
+      (*dst)++;
+    }
+    release(&p->lock);
+  }
 }
 
 // Pass p's abandoned children to init.

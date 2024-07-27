@@ -18,7 +18,7 @@ main(int argc, char *argv[])
     fprintf(2, "%s: trace failed\n", argv[0]);
     exit(1);
   }
-  
+  // 将命令行中的参数argv复制到nargv中，同时删去前两个参数
   for(i = 2; i < argc && i < MAXARG; i++){
     nargv[i-2] = argv[i];
   }

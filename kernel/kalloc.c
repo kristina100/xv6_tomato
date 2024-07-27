@@ -13,11 +13,12 @@ void freerange(void *pa_start, void *pa_end);
 
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
-
+// 用于表示空闲内存块，next指向下一个空闲内存块的指针
 struct run {
   struct run *next;
 };
-
+// 匿名结构体，拥有一个自旋锁，用于在访问空闲内存链表时进行同步，防止并发访问
+// 拥有一个指向run的指针，表示空闲内存块的链表头
 struct {
   struct spinlock lock;
   struct run *freelist;
@@ -28,6 +29,21 @@ kinit()
 {
   initlock(&kmem.lock, "kmem");
   freerange(end, (void*)PHYSTOP);
+}
+
+// 获取空闲内存量
+void 
+freebytes(uint64 *dst)
+{
+  *dst = 0;
+  struct run *p = kmem.freelist;
+
+  acquire(&kmem.lock);
+  while(p){
+    *dst += PGSIZE;
+    p = p->next;
+  }
+  release(&kmem.lock);
 }
 
 void
