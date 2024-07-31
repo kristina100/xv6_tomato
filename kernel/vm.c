@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -15,6 +17,60 @@ extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
+pagetable_t
+ukvminit()
+{
+  pagetable_t kpagetable = (pagetable_t) kalloc();
+  if(kpagetable == 0) return kpagetable;
+
+  memset(kpagetable, 0, PGSIZE);
+  // uart registers
+  ukvmmap(kpagetable, UART0, UART0, PGSIZE, PTE_R | PTE_W);
+  // virtio mmio disk interface
+  ukvmmap(kpagetable, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+  // CLINT
+  ukvmmap(kpagetable, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
+  // PLIC
+  ukvmmap(kpagetable, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
+  // map kernel text executable and read-only.
+  ukvmmap(kpagetable, KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
+  // map kernel data and the physical RAM we'll make use of.
+  ukvmmap(kpagetable, (uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
+  // map the trampoline for trap entry/exit to
+  // the highest virtual address in the kernel.
+  ukvmmap(kpagetable, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+  return kpagetable;
+}
+
+
+void _vmprint(pagetable_t pagetable, int level)
+{
+  static char* level_[] = {
+    "", 
+    "..",
+    ".. ..",
+    ".. .. ..",
+  };
+
+  if(level <= 0 || level >= 4) panic("not in '1, 2, 3'\n");
+
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    if(pte & PTE_V){
+      printf("%s%d: pte %p pa %p \n", level_[level], i, pte, PTE2PA(pte));
+      if((pte & (PTE_R | PTE_W | PTE_X)) == 0){
+        uint64 child = PTE2PA(pte);
+        _vmprint((pagetable_t)child, level + 1);
+      }
+    }
+  }
+}
+
+void vmprint(pagetable_t pagetable)
+{
+  printf("page table %p\n", pagetable);
+  _vmprint(pagetable, 1);
+}
 /*
  * create a direct-map page table for the kernel.
  */
@@ -53,6 +109,13 @@ void
 kvminithart()
 {
   w_satp(MAKE_SATP(kernel_pagetable));
+  sfence_vma();
+}
+
+void
+ukvminithart()
+{
+  w_satp(MAKE_SATP(myproc()->kpagetable));
   sfence_vma();
 }
 
@@ -439,4 +502,112 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+void ukvmmap(pagetable_t kpagetable, uint64 va, uint64 pa, uint64 sz, int perm)
+{
+  if(mappages(kpagetable, va, sz, pa, perm) != 0) panic("ukvmap");
+}
+
+void 
+ukvmunmap(pagetable_t pagetable, uint64 va, uint64 npages)
+{
+  uint64 a;
+  pte_t *pte;
+
+  if((va % PGSIZE) != 0)
+    panic("ukvunmap: not aliged");
+  
+  for(a = va; a < va + npages * PGSIZE; a += PGSIZE){
+    if((pte = walk(pagetable, a, 0)) == 0)
+      goto clean;
+    if((*pte & PTE_V))
+      goto clean;
+    if(PTE_FLAGS(*pte) == PTE_V)
+      panic("ukvmunmap: not a leaf");
+    
+
+    clean:
+      *pte = 0;
+  }
+}
+
+void
+ufreewalk(pagetable_t pagetable)
+{
+  for(int i = 0; i < 512; i++)
+  {
+    pte_t pte = pagetable[i];
+    if((pte & PTE_V) && (pte & (PTE_R | PTE_W | PTE_X)) == 0)
+    {
+      uint64 child = PTE2PA(pte);
+      ufreewalk((pagetable_t)child);
+      pagetable[i] = 0;
+    }
+    pagetable[i] = 0;
+  }
+  kfree((void*)pagetable);
+}
+
+void freeprockvm(struct proc* p) {
+  pagetable_t kpagetable = p->kpagetable;
+  // reverse order of allocation
+  // 按分配顺序的逆序来销毁映射, 但不回收物理地址
+  ukvmunmap(kpagetable, p->kstack, PGSIZE/PGSIZE);
+  ukvmunmap(kpagetable, TRAMPOLINE, PGSIZE/PGSIZE);
+  ukvmunmap(kpagetable, (uint64)etext, (PHYSTOP-(uint64)etext)/PGSIZE);
+  ukvmunmap(kpagetable, KERNBASE, ((uint64)etext-KERNBASE)/PGSIZE);
+  ukvmunmap(kpagetable, PLIC, 0x400000/PGSIZE);
+  ukvmunmap(kpagetable, CLINT, 0x10000/PGSIZE);
+  ukvmunmap(kpagetable, VIRTIO0, PGSIZE/PGSIZE);
+  ukvmunmap(kpagetable, UART0, PGSIZE/PGSIZE);
+  ufreewalk(kpagetable);
+}
+
+
+int umappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+{
+  uint64 a, last;
+  pte_t *pte;
+
+  a = PGROUNDDOWN(va);
+  last = PGROUNDUP(va + size - 1);
+
+  for(;;)
+  {
+    if((pte = walk(pagetable, a, 1)) == 0){
+      return -1;
+    }
+    *pte = PA2PTE(pa) | perm | PTE_V;
+    if(a == last) break;
+    a += PGSIZE;
+    pa += PGSIZE;
+  }
+  return 0;
+}
+
+
+int 
+pagecopy(pagetable_t oldpage, pagetable_t newpage, uint64 begin, uint64 end){
+  pte_t *pte;
+  uint64 pa, i;
+  uint flags;
+  begin = PGROUNDUP(begin);
+
+  for(i = begin; i < end; i += PGSIZE){
+    if((pte = walk(oldpage, i, 0)) == 0)
+      panic("pagecopy walk oldpage nullptr");
+    if((*pte & PTE_V) == 0)
+      panic("pagecopy oldpage pte not valid");
+    pa = PTE2PA(*pte);
+    flags = PTE_FLAGS(*pte) & (~PTE_U);
+    if(umappages(newpage, i, PGSIZE, pa, flags) != 0){
+      goto err;
+    }
+  }
+  return 0;
+
+  err:
+    uvmunmap(newpage, 0, i /PGSIZE, 1);
+    return -1;
 }
