@@ -8,11 +8,11 @@
 	# kernel.ld causes this to be aligned
         # to a page boundary.
         #
-	.section trampsec
-.globl trampoline
-trampoline:
-.align 4
-.globl uservec
+	.section trampsec # 定义段，代码放在段这里
+.globl trampoline # 代码入口，定义trampoline 标签，标记代码的开始
+trampoline: 
+.align 4 # 对齐到4字节边界
+.globl uservec # 声明 全局符号 uservec，用户态陷入的入口
 uservec:    
 	#
         # trap.c sets stvec to point here, so
@@ -26,9 +26,9 @@ uservec:
         
 	# swap a0 and sscratch
         # so that a0 is TRAPFRAME
-        csrrw a0, sscratch, a0
+        csrrw a0, sscratch, a0 # 保存用户态寄存器到陷阱框架  sscratch保存了用户态trapframe地址
 
-        # save the user registers in TRAPFRAME
+        # save the user registers in TRAPFRAME 用于将用户态寄存器的值保存到 trapframe 中
         sd ra, 40(a0)
         sd sp, 48(a0)
         sd gp, 56(a0)
@@ -65,25 +65,27 @@ uservec:
         sd t0, 112(a0)
 
         # restore kernel stack pointer from p->trapframe->kernel_sp
-        ld sp, 8(a0)
+        ld sp, 8(a0) # 从trapframe中恢复内核态的栈指针sp
 
         # make tp hold the current hartid, from p->trapframe->kernel_hartid
-        ld tp, 32(a0)
+        ld tp, 32(a0) # tp用于存放硬件线程ID
 
         # load the address of usertrap(), p->trapframe->kernel_trap
-        ld t0, 16(a0)
+        ld t0, 16(a0) # 
 
         # restore kernel page table from p->trapframe->kernel_satp
-        ld t1, 0(a0)
-        csrw satp, t1
-        sfence.vma zero, zero
+        ld t1, 0(a0) # 从 trapframe 中恢复内核页表基址，并存储在t1中
+        csrw satp, t1 # 将内核页表基址写入satp中，激活内核页表
+        sfence.vma zero, zero # 同步页表切换，确保内存地址映射更新后生效
 
         # a0 is no longer valid, since the kernel page
         # table does not specially map p->tf.
 
         # jump to usertrap(), which does not return
-        jr t0
+        jr t0 # 跳转到 t0 所指向的 usertrap 函数的地址
 
+
+# 从内核态切换到用户态
 .globl userret
 userret:
         # userret(TRAPFRAME, pagetable)
@@ -93,12 +95,12 @@ userret:
         # a1: user page table, for satp.
 
         # switch to the user page table.
-        csrw satp, a1
-        sfence.vma zero, zero
+        csrw satp, a1 # 将a1写入satp寄存器；切换到用户态页表
+        sfence.vma zero, zero # 同步页表切换，确保虚拟内存地址映射的变化被正确更新
 
         # put the saved user a0 in sscratch, so we
         # can swap it with our a0 (TRAPFRAME) in the last step.
-        ld t0, 112(a0)
+        ld t0, 112(a0) # 从
         csrw sscratch, t0
 
         # restore all but a0 from TRAPFRAME
