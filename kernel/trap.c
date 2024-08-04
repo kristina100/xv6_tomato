@@ -77,9 +77,21 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
+  // 在一个alarm超时，需要执行用户所提供的函数时，注意我们并不是在trap函数里直接执行
+  // 因为内核和用户的内存地址映射是不一样的
+
+  if(which_dev == 2){
+    p->ticks_count += 1;
+    if(p->alarm_interval != 0 && p->ticks_count == p->alarm_interval && p->is_alarming == 0){
+      // 保存寄存器内容
+      memmove(p->alarm_trapframe, p->trapframe, sizeof(struct trapframe));
+      p->trapframe->epc = (uint64)p->alarm_handler; // 修改跳转位置
+      p->ticks_count = 0;
+      p->is_alarming = 1;
+    }
     yield();
 
+  }
   usertrapret();
 }
 

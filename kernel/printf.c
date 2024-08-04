@@ -122,6 +122,7 @@ panic(char *s)
   printf(s);
   printf("\n");
   panicked = 1; // freeze uart output from other CPUs
+  // backtrace();
   for(;;)
     ;
 }
@@ -131,4 +132,16 @@ printfinit(void)
 {
   initlock(&pr.lock, "pr");
   pr.locking = 1;
+}
+
+void 
+backtrace(void)
+{
+  printf("backtrace: \n");
+  uint64 fp = r_fp(); // 读取当前帧
+  while(PGROUNDUP(fp) - PGROUNDDOWN(fp) == PGSIZE){ // 以页面对齐地址为每个栈分配一个页面
+    uint64 ret_addr = *(uint64*)(fp - 8); // 返回地址位于栈帧指针的固定偏移-8位置
+    printf("%p\n", ret_addr);
+    fp = *(uint64*)(fp - 16); // 保存的帧指针的固定偏移-16位置
+  }
 }
