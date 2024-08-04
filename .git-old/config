@@ -1,0 +1,31 @@
+[core]
+	repositoryformatversion = 0
+	filemode = true
+	bare = false
+	logallrefupdates = true
+[remote "origin"]
+	url = git://g.csail.mit.edu/xv6-labs-2020
+	fetch = +refs/heads/*:refs/remotes/origin/*
+[branch "master"]
+	remote = origin
+	merge = refs/heads/master
+	vscode-merge-base = origin/master
+[branch "util"]
+	remote = origin
+	merge = refs/heads/util
+	vscode-merge-base = origin/master
+[remote "github"]
+	url = git@github.com:kristina100/xv6_tomato.git
+	fetch = +refs/heads/*:refs/remotes/github/*
+[branch "syscall"]
+	remote = origin
+	merge = refs/heads/syscall
+	vscode-merge-base = origin/master
+[branch "pgtbl"]
+	remote = origin
+	merge = refs/heads/pgtbl
+	vscode-merge-base = origin/master
+[branch "traps"]
+	remote = origin
+	merge = refs/heads/traps
+	vscode-merge-base = origin/master
